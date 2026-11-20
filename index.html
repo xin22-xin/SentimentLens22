@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>多語言情感分析</title>
+  <style>
+    :root{--bg:#f6f7fb;--card:#fff;--ink:#1f2430;--muted:#6b7280;--line:#e5e7eb;--accent:#4f46e5;
+      --pos:#16a34a;--neu:#6b7280;--neg:#dc2626}
+    @media (prefers-color-scheme:dark){
+      :root{--bg:#12141a;--card:#1c1f27;--ink:#eceef3;--muted:#9aa1b0;--line:#2c303b;--accent:#818cf8}}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,"Noto Sans TC","Microsoft JhengHei",sans-serif}
+    main{max-width:720px;margin:0 auto;padding:32px 16px 64px}
+    h1{margin:0 0 4px;font-size:28px}
+    .sub{color:var(--muted);margin:0 0 24px;font-size:14px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+    .examples{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+    button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 12px}
+    button:hover:not(:disabled){border-color:var(--accent)}
+    button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;padding:10px 22px}
+    button:disabled{opacity:.55;cursor:not-allowed}
+    textarea{width:100%;min-height:130px;resize:vertical;font:inherit;padding:12px;border-radius:10px;
+      border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+    textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+    .row{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+    #status{color:var(--muted);font-size:14px}
+    #result[hidden]{display:none}
+    .verdict{font-size:24px;font-weight:700;margin:0}
+    .conf{color:var(--muted);margin:0 0 16px}
+    .bar{display:grid;grid-template-columns:72px 1fr 56px;align-items:center;gap:10px;margin:8px 0;font-size:14px}
+    .track{height:12px;border-radius:6px;background:var(--bg);overflow:hidden;border:1px solid var(--line)}
+    .fill{height:100%;border-radius:6px;transition:width .4s}
+    .pct{text-align:right;font-variant-numeric:tabular-nums}
+    footer{color:var(--muted);font-size:13px;text-align:center}
+    code{background:var(--bg);padding:1px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+<main>
+  <h1>💬 多語言情感分析</h1>
+  <p class="sub">模型直接在你的瀏覽器中執行，文字不會上傳到任何伺服器 · 支援中文、英文等多種語言</p>
+
+  <section class="card">
+    <div class="examples" id="examples" aria-label="範例文字"></div>
+    <label for="text" class="sub">請輸入要分析的文字</label>
+    <textarea id="text"></textarea>
+    <div class="row">
+      <button id="run" class="primary" type="button" disabled>開始分析</button>
+      <span id="status" role="status" aria-live="polite">正在載入模型，首次載入約需數十秒…</span>
+    </div>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <p class="verdict" id="verdict"></p>
+    <p class="conf" id="conf"></p>
+    <div id="bars"></div>
+  </section>
+
+  <footer>模型：<code>Xenova/distilbert-base-multilingual-cased-sentiments-student</code> · 使用 transformers.js</footer>
+</main>
+
+<script type="module">
+  import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0";
+
+  const MODEL = "Xenova/distilbert-base-multilingual-cased-sentiments-student";
+  const LABELS = {
+    positive: ["正面 😊", "var(--pos)"],
+    neutral: ["中性 😐", "var(--neu)"],
+    negative: ["負面 😞", "var(--neg)"],
+  };
+  const EXAMPLES = [
+    "這家餐廳的餐點很好吃，服務也很親切，下次還會再來！",
+    "東西還可以，沒有特別驚豔，價格普通。",
+    "等了一個小時才上菜，態度又差，真的很失望。",
+    "I absolutely love this phone, the battery lasts forever.",
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const text = $("text"), run = $("run"), status = $("status");
+  text.value = EXAMPLES[0];
+
+  EXAMPLES.forEach((example, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = `範例 ${i + 1}`;
+    b.addEventListener("click", () => { text.value = example; });
+    $("examples").append(b);
+  });
+
+  let classifier;
+  try {
+    classifier = await pipeline("text-classification", MODEL, {
+      progress_callback: (p) => {
+        if (p.status === "progress") status.textContent = `正在下載模型… ${Math.round(p.progress)}%`;
+      },
+    });
+    status.textContent = "模型已就緒";
+    run.disabled = false;
+  } catch (error) {
+    status.textContent = "模型載入失敗：" + (error.message || error) + "（請確認網路連線，並透過 http 開啟此頁）";
+  }
+
+  run.addEventListener("click", async () => {
+    const input = text.value.trim();
+    if (!input) { status.textContent = "請先輸入文字。"; return; }
+    run.disabled = true; status.textContent = "分析中…";
+    try {
+      let scores = await classifier(input.slice(0, 1000), { top_k: null });
+      scores = (Array.isArray(scores[0]) ? scores[0] : scores).sort((a, b) => b.score - a.score);
+      const [name, color] = LABELS[scores[0].label] || [scores[0].label, "var(--accent)"];
+      $("verdict").textContent = `結果：${name}`;
+      $("conf").textContent = `信心分數 ${(scores[0].score * 100).toFixed(1)}%`;
+      $("bars").replaceChildren(...scores.map((s) => {
+        const [label, c] = LABELS[s.label] || [s.label, "var(--accent)"];
+        const row = document.createElement("div"); row.className = "bar";
+        const pct = (s.score * 100).toFixed(1);
+        row.innerHTML = `<span></span><div class="track"><div class="fill" style="width:${pct}%;background:${c}"></div></div><span class="pct">${pct}%</span>`;
+        row.firstChild.textContent = label;
+        return row;
+      }));
+      $("result").hidden = false;
+      status.textContent = "完成";
+    } catch (error) {
+      status.textContent = "分析失敗：" + (error.message || error);
+    } finally { run.disabled = false; }
+  });
+</script>
+</body>
+</html>
